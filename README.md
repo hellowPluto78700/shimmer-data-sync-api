@@ -148,18 +148,12 @@ RESTful API for managing and processing Shimmer wearable sensor data in the clou
    ```
 
 ### AWS Lambda Deployment
-1. Package dependencies:
-   ```sh
-   pip install -t lambda_package/ -r requirements.txt
-   cp main.py shimmer_decode.py shimmerCalibrate.py lambda_package/
-   cd lambda_package && zip -r ../lambda_package.zip .
-   ```
-
-2. Deploy to Lambda and configure API Gateway
+See [DEPLOYMENT.md](DEPLOYMENT.md) for the independent AWS SAM stack,
+runtime dependencies, DynamoDB schema evidence and remaining deployment gates.
 
 ## Key Endpoints
 
-Base URL example: `https://odb777ddnc.execute-api.us-east-2.amazonaws.com`
+Base URL: use the new stack's `ApiBaseUrl` output (see [DEPLOYMENT.md](DEPLOYMENT.md)).
 
 ### File Management
 - `POST /upload/` - Upload Shimmer sensor file (header metadata to DynamoDB; does not set `recordedTimestamp` from `timestampCal`)

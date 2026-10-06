@@ -1,0 +1,7 @@
+fastapi
+mangum
+pydantic
+python-dotenv
+python-multipart
+boto3
+urllib3

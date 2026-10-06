@@ -1,0 +1,232 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+
+Description: >
+  Shimmer Data Sync API cloud stack.
+  Creates the backend resources required by the existing
+  FastAPI/Mangum application without changing its external API contract.
+
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Architectures:
+      - x86_64
+    MemorySize: 1024
+    Timeout: 900
+
+Resources:
+
+  # ---------------------------------------------------------------------------
+  # Storage
+  # ---------------------------------------------------------------------------
+
+  DataBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      # Raw, decoded, and combined data remain private and survive stack removal.
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+
+  DataBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref DataBucket
+      # Presigned URLs already use HTTPS; prohibit unencrypted transport.
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource:
+              - !GetAtt DataBucket.Arn
+              - !Sub '${DataBucket.Arn}/*'
+            Condition:
+              Bool:
+                aws:SecureTransport: 'false'
+
+  # ---------------------------------------------------------------------------
+  # DynamoDB
+  # ---------------------------------------------------------------------------
+
+  DevicePatientTable:
+    # main.py get_item/delete_item explicitly use only Key={"device": ...}.
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: device
+          AttributeType: S
+      KeySchema:
+        - AttributeName: device
+          KeyType: HASH
+
+  FileMetadataTable:
+    # Inferred file identity: both upload/decode put_item paths supply this field.
+    # One metadata row per raw file; authorized inference after history search.
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: full_file_name
+          AttributeType: S
+      KeySchema:
+        - AttributeName: full_file_name
+          KeyType: HASH
+
+  AggregatorStateTable:
+    # daily_aggregator_handler.py reads Key={"id": "last_processed_date"}.
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+
+  AggregatedDataTable:
+    # Inferred daily identity from summary put_item; no keyed reads in source.
+    # This provisional clone schema overwrites per date; see DEPLOYMENT.md.
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: date
+          AttributeType: S
+      KeySchema:
+        - AttributeName: date
+          KeyType: HASH
+
+  # ---------------------------------------------------------------------------
+  # API Gateway HTTP API
+  #
+  # Use the $default stage so the public URL remains:
+  #
+  # https://<api-id>.execute-api.us-east-2.amazonaws.com/<path>
+  #
+  # rather than adding /Prod or another stage prefix.
+  # ---------------------------------------------------------------------------
+
+  ShimmerHttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: '$default'
+
+  # ---------------------------------------------------------------------------
+  # Main FastAPI Lambda
+  # ---------------------------------------------------------------------------
+
+  MainApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: main.handler
+      Description: Shimmer FastAPI backend via Mangum
+      Environment:
+        Variables:
+          S3_BUCKET: !Ref DataBucket
+          DDB_TABLE: !Ref DevicePatientTable
+          DDB_FILE_TABLE: !Ref FileMetadataTable
+          DDB_STATE_TABLE: !Ref AggregatorStateTable
+          DDB_OUTPUT_TABLE: !Ref AggregatedDataTable
+          OUTPUT_S3_PREFIX: combinedbyDay/
+      Policies:
+        # SAM also adds AWSLambdaBasicExecutionRole for CloudWatch logs.
+        - Statement:
+            - Effect: Allow
+              Action: s3:ListBucket
+              Resource: !GetAtt DataBucket.Arn
+            - Effect: Allow
+              Action: [s3:GetObject, s3:PutObject, s3:PutObjectTagging, s3:AbortMultipartUpload]
+              Resource: !Sub '${DataBucket.Arn}/*'
+            - Effect: Allow
+              Action: [dynamodb:Scan, dynamodb:GetItem, dynamodb:PutItem, dynamodb:DeleteItem, dynamodb:BatchWriteItem]
+              Resource: !GetAtt DevicePatientTable.Arn
+            - Effect: Allow
+              Action: [dynamodb:Scan, dynamodb:PutItem]
+              Resource: !GetAtt FileMetadataTable.Arn
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:PutItem]
+              Resource: !GetAtt AggregatorStateTable.Arn
+            - Effect: Allow
+              Action: dynamodb:PutItem
+              Resource: !GetAtt AggregatedDataTable.Arn
+      Events:
+
+        RootRoute:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref ShimmerHttpApi
+            Path: /
+            Method: ANY
+
+        ProxyRoute:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref ShimmerHttpApi
+            Path: /{proxy+}
+            Method: ANY
+
+  # CORE deployment: no separate aggregator/scheduler Lambda or automatic timer.
+  # Auxiliary tables support unchanged manual aggregator routes in main.py.
+
+Outputs:
+
+  ApiBaseUrl:
+    Description: Base URL for Android and dashboard
+    Value: !Sub
+      - 'https://${ApiId}.execute-api.${AWS::Region}.${AWS::URLSuffix}'
+      - ApiId: !Ref ShimmerHttpApi
+
+  DataBucketName:
+    Description: S3 bucket storing Shimmer raw and decoded data
+    Value: !Ref DataBucket
+
+  DevicePatientTableName:
+    Description: Device to patient mapping DynamoDB table
+    Value: !Ref DevicePatientTable
+
+  FileMetadataTableName:
+    Description: Decoded file metadata DynamoDB table
+    Value: !Ref FileMetadataTable
+
+  AggregatorStateTableName:
+    Description: Daily aggregator state DynamoDB table
+    Value: !Ref AggregatorStateTable
+
+  AggregatedDataTableName:
+    Description: Daily aggregated summary DynamoDB table
+    Value: !Ref AggregatedDataTable
+
+  MainApiFunctionName:
+    Description: Main FastAPI Lambda function
+    Value: !Ref MainApiFunction
+
+  ApiGatewayId:
+    Description: HTTP API Gateway ID
+    Value: !Ref ShimmerHttpApi

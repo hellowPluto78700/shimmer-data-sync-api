@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from fastapi import Request
 import struct
-from shimmerCaliberate import read_shimmer_dat
+from shimmerCalibrate import read_shimmer_dat
 
 # Load environment variables from .env if present
 load_dotenv()

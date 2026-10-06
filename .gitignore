@@ -21,3 +21,6 @@ COST_ESTIMATION.md
 .DS_Store
 *.log
 run_backfill_all*
+.aws-sam/
+*.pyc
+.venv/
