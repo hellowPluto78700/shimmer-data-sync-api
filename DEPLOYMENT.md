@@ -1,6 +1,8 @@
 # Independent backend deployment
 
 Baseline: `e638cfb068bc88e2bc3edd6fd7bf5aabfc0be335`; branch: `aws-clone-deploy`.
+The deployed resource names and live contract results are recorded in
+[CORE_VALIDATION.md](CORE_VALIDATION.md).
 Only the backend is in scope. The API routes, request/response models and decoder
 are retained. Application changes are the Linux import correction from
 `shimmerCaliberate` to `shimmerCalibrate` and regional SigV4 S3 client configuration
@@ -36,6 +38,9 @@ a separate migration plan.
 | `DDB_FILE_TABLE` | `full_file_name` (authorized inference) | Upload metadata includes it at `main.py:272` and writes at 297. `parse_decode_filename` includes it at 1372 and decode writes at 1548. Reads are paginated scans at 375, 1119, 1426, 2049 and `daily_aggregator_handler.py:127`. One metadata record per raw file; consistent file identity throughout runtime code. |
 | `DDB_STATE_TABLE` | `id` | Explicit `get_item(Key={"id": "last_processed_date"})` at `daily_aggregator_handler.py:36`; matching state write at 48. No sort key. |
 | `DDB_OUTPUT_TABLE` | `date` (provisional) | Summary item at `daily_aggregator_handler.py:448` includes date and is written at 457; no keyed reads or documented original schema. |
+
+Source line references above use the pre-S3-configuration baseline layout;
+the current `main.py` line numbers move by five lines after the client fix.
 
 The original file-table definition was not recovered after searching all local
 branches/history with `git log --all -S` for `DecodedFileMeta`, `DDB_FILE_TABLE`,
