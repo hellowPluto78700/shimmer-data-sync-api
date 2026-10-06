@@ -2,8 +2,9 @@
 
 Baseline: `e638cfb068bc88e2bc3edd6fd7bf5aabfc0be335`; branch: `aws-clone-deploy`.
 Only the backend is in scope. The API routes, request/response models and decoder
-are retained; the application change is the Linux import correction from
-`shimmerCaliberate` to `shimmerCalibrate` in `main.py`.
+are retained. Application changes are the Linux import correction from
+`shimmerCaliberate` to `shimmerCalibrate` and regional SigV4 S3 client configuration
+in `main.py` to prevent redirects of presigned uploads to the new bucket.
 
 ## Runtime and dependencies
 
@@ -142,8 +143,9 @@ tests. Do not commit local environments, `.aws-sam/` or Python caches.
 - An isolated `python -I -S` import using only the built artifact and standard
   library resolved `main.handler` and all production packages; `main.py` and
   `shimmerCalibrate.py` are present, and no `.env` is packaged.
-- OpenAPI and registered routes match baseline `e638cfb` after correcting only
-  its import typo. Decoder and aggregator source are byte-for-byte unchanged.
+- OpenAPI and registered routes match baseline `e638cfb`; only the import typo
+  and S3 client configuration change. Decoder and aggregator source are
+  byte-for-byte unchanged.
 - A representative HTTP API v2 proxy event reached the unchanged filename parser.
 - Scheduler checks matched baseline POST body/headers/timeouts and response/error
   branches; absent URL sends no request. No old API hostname remains in source.
@@ -155,3 +157,15 @@ tests. Do not commit local environments, `.aws-sam/` or Python caches.
 
 SAM linting and manual IAM/storage review are not a formal cfn-guard compliance
 certification; cfn-guard and its Python binding are not installed.
+
+## Deployment defect found during live validation
+
+The first live presigned PUT returned HTTP 307 `TemporaryRedirect`: the global
+`bucket.s3.amazonaws.com` host directed the client to
+`bucket.s3.us-east-2.amazonaws.com`. This is a blocker for clients that use the
+returned upload URL directly. `main.py` now uses
+`Config(signature_version="s3v4", s3={"addressing_style": "virtual"})` on its
+existing S3 client. Region and credentials still come from the existing SDK
+environment. This signs against the regional hostname without altering paths,
+HTTP methods, payloads, response keys or presigned expiry. It follows the
+[Boto3 presigned URL guidance](https://docs.aws.amazon.com/boto3/latest/guide/s3-presigned-urls.html).

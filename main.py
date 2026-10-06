@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import io
 import zipfile
 import boto3
+from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
 from typing import List, Optional, Dict, Any
 from collections import defaultdict
@@ -46,7 +47,10 @@ def timestamp_cal_to_iso(decoded: Dict[str, Any], index: int) -> Optional[str]:
 S3_BUCKET = os.getenv("S3_BUCKET")
 
 # Use default boto3 session (credentials and region are handled by Lambda)
-s3_client = boto3.client("s3")
+# Sign against the bucket's regional host so a new bucket does not redirect PUTs.
+s3_client = boto3.client(
+    "s3", config=Config(signature_version="s3v4", s3={"addressing_style": "virtual"})
+)
 
 app = FastAPI()
 
