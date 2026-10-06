@@ -10,6 +10,13 @@ Metadata:
   AWSToolsMetrics:
     AWSAgentToolkit: aws-cloudformation@3
 
+Parameters:
+  SchedulerState:
+    Type: String
+    Default: DISABLED
+    AllowedValues: [DISABLED, ENABLED]
+    Description: Enable only after manual aggregator and scheduler validation.
+
 Globals:
   Function:
     Runtime: python3.12
@@ -108,18 +115,18 @@ Resources:
           KeyType: HASH
 
   AggregatedDataTable:
-    # Inferred daily identity from summary put_item; no keyed reads in source.
-    # This provisional clone schema overwrites per date; see DEPLOYMENT.md.
+    # Existing summary includes the device/date/shimmer S3 identity.
+    # Date alone overwrites same-date groups; retain the old table on replacement.
     Type: AWS::DynamoDB::Table
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
-        - AttributeName: date
+        - AttributeName: combined_s3_key
           AttributeType: S
       KeySchema:
-        - AttributeName: date
+        - AttributeName: combined_s3_key
           KeyType: HASH
 
   # ---------------------------------------------------------------------------
@@ -192,8 +199,29 @@ Resources:
             Path: /{proxy+}
             Method: ANY
 
-  # CORE deployment: no separate aggregator/scheduler Lambda or automatic timer.
-  # Auxiliary tables support unchanged manual aggregator routes in main.py.
+  BackfillSchedulerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: daily_aggregatore_scheduler.lambda_handler
+      Description: Calls only this clone's daily aggregator backfill API.
+      MemorySize: 256
+      Environment:
+        Variables:
+          API_BASE_URL: !Sub 'https://${ShimmerHttpApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}'
+      # This function only performs HTTP requests; SAM supplies logging permission.
+      Events:
+        DailyBackfill:
+          Type: ScheduleV2
+          Properties:
+            Name: !Sub '${AWS::StackName}-daily-backfill'
+            Description: Daily at 11:45 PM America/New_York, confirmed by user.
+            ScheduleExpression: cron(45 23 * * ? *)
+            ScheduleExpressionTimezone: America/New_York
+            FlexibleTimeWindow:
+              Mode: 'OFF'
+            State: !Ref SchedulerState
+            Input: '{}'
 
 Outputs:
 
@@ -230,3 +258,11 @@ Outputs:
   ApiGatewayId:
     Description: HTTP API Gateway ID
     Value: !Ref ShimmerHttpApi
+
+  BackfillSchedulerFunctionName:
+    Description: Clone-only HTTP backfill scheduler Lambda.
+    Value: !Ref BackfillSchedulerFunction
+
+  DailyBackfillScheduleName:
+    Description: EventBridge Scheduler schedule in the default schedule group.
+    Value: !Sub '${AWS::StackName}-daily-backfill'

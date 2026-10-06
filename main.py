@@ -2090,13 +2090,14 @@ def backfill_missing_dates(limit: Optional[int] = Body(None, embed=True)):
             if filename.endswith("_combined.json"):
                 # Parse date from filename: device_YYYY-MM-DD_shimmername_combined.json
                 parts = filename.replace("_combined.json", "").split("_")
-                if len(parts) >= 2:
+                # Device names can contain underscores; locate the date component.
+                for potential_date in parts[1:]:
                     # Try to parse date (format: YYYY-MM-DD)
-                    potential_date = parts[1]
                     try:
                         # Validate it's a date
                         datetime.strptime(potential_date, "%Y-%m-%d")
                         processed_dates.add(potential_date)
+                        break
                     except ValueError:
                         # Not a date, skip
                         pass

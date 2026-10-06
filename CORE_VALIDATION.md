@@ -1,5 +1,8 @@
 # Deployed CORE backend validation
 
+This is the original CORE deployment snapshot. Subsequent auxiliary-table and
+scheduler changes are recorded in [AGGREGATOR_VALIDATION.md](AGGREGATOR_VALIDATION.md).
+
 Verified on 2026-10-06 in AWS account `837873138796`, region `us-east-2`, using
 the existing `shimmer-admin` SSO profile. No credentials or account settings were
 changed. Baseline: `e638cfb068bc88e2bc3edd6fd7bf5aabfc0be335`.
